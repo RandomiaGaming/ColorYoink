@@ -19,14 +19,19 @@ namespace ColorYoink
 		[STAThread]
 		public static void Main(string[] args)
 		{
-			ColorYoinkForm backgroundForm = new ColorYoinkForm();
-			Application.Run(backgroundForm);
+			GlobalHotkey CtrlAltC = new GlobalHotkey(Keys.C, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("Balls"); });
+			GlobalHotkey CtrlAltD = new GlobalHotkey(Keys.D, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("Dick"); });
+
+			while (true)
+			{
+				Application.DoEvents();
+			}
 		}
 		public static void YoinkColor()
 		{
 			try
 			{
-				SetClipboardToPNG(ColorToBitmap(GetColorFromScreen(GetCursorPosition()), 16, 16));
+				ColorYoink.SetClipboardToPNG(ColorYoink.ColorToBitmap(ColorYoink.GetColorFromScreen(ColorYoink.GetCursorPosition()), 16, 16));
 			}
 			catch (Exception ex)
 			{
@@ -247,61 +252,14 @@ namespace ColorYoink
 	#region HELP
 	public sealed class KeyboardHook : IDisposable
 	{
-		private class HotkeySubsystemWindow : NativeWindow, IDisposable
-		{
-			public HotkeySubsystemWindow(GlobalHotkey parent)
-			{
-				this.CreateHandle(new CreateParams());
-			}
-
-			protected override void WndProc(ref Message m)
-			{
-				base.WndProc(ref m);
-
-				// check if we got a hot key pressed.
-				if (m.Msg is 0x0312)
-				{
-					// get the keys.
-					Keys key = (Keys)(((int)m.LParam >> 16) & 0xFFFF);
-					HotkeyModifier modifier = (HotkeyModifier)((int)m.LParam & 0xFFFF);
-
-					// invoke the event to notify the parent.
-					if (KeyPressed != null)
-					{
-						KeyPressed.Invoke();
-					}
-				}
-			}
-
-			public HotkeyEvent KeyPressed;
-
-			public void Dispose()
-			{
-				this.DestroyHandle();
-			}
-		}
-
-		private HotkeySubsystemWindow _window;
-		private int _currentId;
+		private WindowsMessagePump _subsystem;
 		public KeyboardHook()
 		{
-			_window = new HotkeySubsystemWindow(null);
-			// register the event of the inner native window.
-			_window.KeyPressed += () =>
-			{
-				if (!(KeyPressed is null))
-				{
-					KeyPressed.Invoke();
-				}
-			};
+			_subsystem = new WindowsMessagePump(MessageHandler);
 		}
 		public void RegisterHotKey(HotkeyModifier modifier, Keys key)
 		{
-			// increment the counter.
-			_currentId = _currentId + 1;
-
-			// register the hot key.
-			if (!GlobalHotkey.RegisterHotKey(_window.Handle, _currentId, (uint)modifier, (uint)key))
+			if (!RegisterHotKey(_subsystem.Handle, 0, (uint)modifier, (uint)key))
 			{
 				throw new InvalidOperationException("Couldn’t register the hot key.");
 			}
@@ -309,9 +267,23 @@ namespace ColorYoink
 		public HotkeyEvent KeyPressed;
 		public void Dispose()
 		{
-			GlobalHotkey.UnregisterHotKey(_window.Handle, _currentId);
-			_window.Dispose();
+			UnregisterHotKey(_subsystem.Handle, 0);
+			_subsystem.Dispose();
 		}
+		private void MessageHandler(ref Message message)
+		{
+			if (message.Msg is 0x0312)
+			{
+				if (!(KeyPressed is null))
+				{
+					KeyPressed.Invoke();
+				}
+			}
+		}
+		[DllImport("user32.dll")]
+		private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+		[DllImport("user32.dll")]
+		private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 	}
 	#endregion
 
@@ -321,9 +293,6 @@ namespace ColorYoink
 		private NotifyIcon notifyIcon;
 		public ColorYoinkForm()
 		{
-			KeyboardHook hook = new KeyboardHook();
-			hook.KeyPressed = () => { MessageBox.Show("Balls"); };
-			hook.RegisterHotKey(HotkeyModifier.Control | HotkeyModifier.Alt, Keys.C);
 			//CtrlAltC = new GlobalHotkey(this, Keys.C, GlobalHotkeyModifier.Control);
 
 			notifyIcon = new NotifyIcon();
@@ -369,6 +338,102 @@ namespace ColorYoink
 			this.Size = new Size(0, 0);
 		}
 	}
+
+
+	public delegate void WindowsMessageHandler(ref Message message);
+	public sealed class WindowsMessagePump : IDisposable
+	{
+		#region Private Subclasses
+		private sealed class WindowsMessagePumpSubsystemWindow : NativeWindow
+		{
+			public WindowsMessageHandler WindowsMessageHandler;
+			protected override void WndProc(ref Message message)
+			{
+				base.WndProc(ref message);
+
+				if (!(WindowsMessageHandler is null))
+				{
+					WindowsMessageHandler.Invoke(ref message);
+				}
+			}
+		}
+		#endregion
+		#region Public Variables
+		public WindowsMessageHandler WindowsMessageHandler
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("WindowsMessagePump has been disposed.");
+				}
+
+				return _subsystem.WindowsMessageHandler;
+			}
+			set
+			{
+				if (_disposed)
+				{
+					throw new Exception("WindowsMessagePump has been disposed.");
+				}
+
+				_subsystem.WindowsMessageHandler = value;
+			}
+		}
+		public IntPtr Handle
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("WindowsMessagePump has been disposed.");
+				}
+
+				return _subsystem.Handle;
+			}
+		}
+		public bool Disposed
+		{
+			get
+			{
+				return _disposed;
+			}
+		}
+		#endregion
+		#region Private Variables
+		private WindowsMessagePumpSubsystemWindow _subsystem = null;
+		private bool _disposed = false;
+		#endregion
+		#region Public Constructors
+		public WindowsMessagePump(WindowsMessageHandler windowsMessageHandler)
+		{
+			_subsystem = new WindowsMessagePumpSubsystemWindow();
+			_subsystem.WindowsMessageHandler = windowsMessageHandler;
+			_subsystem.CreateHandle(new CreateParams());
+		}
+		public WindowsMessagePump()
+		{
+			_subsystem = new WindowsMessagePumpSubsystemWindow();
+			_subsystem.WindowsMessageHandler = null;
+			_subsystem.CreateHandle(new CreateParams());
+		}
+		#endregion
+		#region Public Methods
+		public void Dispose()
+		{
+			if (_disposed)
+			{
+				throw new Exception("WindowsMessagePump has been disposed.");
+			}
+
+			_subsystem.WindowsMessageHandler = null;
+			_subsystem.DestroyHandle();
+			_subsystem = null;
+
+			_disposed = true;
+		}
+		#endregion
+	}
 	public delegate void HotkeyEvent();
 	[Flags]
 	public enum HotkeyModifier : uint
@@ -383,194 +448,285 @@ namespace ColorYoink
 	public sealed class GlobalHotkey : IDisposable
 	{
 		#region Public Variables
-		public IntPtr WindowHandle => _windowHandle;
-		public Keys Key => _key;
-		public bool Control => _control;
-		public bool Shift => _shift;
-		public bool Alt => _alt;
-		public bool Windows => _windows;
-		public bool NoRepeat => _noRepeat;
-		public bool Registered => _registered;
-		public bool Disposed => _disposed;
+		public HotkeyEvent HotkeyEvent
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("GlobalHotkey has been disposed.");
+				}
+
+				return _hotkeyEvent;
+			}
+			set
+			{
+				if (_disposed)
+				{
+					throw new Exception("GlobalHotkey has been disposed.");
+				}
+
+				_hotkeyEvent = value;
+			}
+		}
+		public Keys Key
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("GlobalHotkey has been disposed.");
+				}
+
+				return _key;
+			}
+		}
+		public bool Control
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("GlobalHotkey has been disposed.");
+				}
+
+				return _control;
+			}
+		}
+		public bool Shift
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("GlobalHotkey has been disposed.");
+				}
+
+				return _shift;
+			}
+		}
+		public bool Alt
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("GlobalHotkey has been disposed.");
+				}
+
+				return _alt;
+			}
+		}
+		public bool Windows
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("GlobalHotkey has been disposed.");
+				}
+
+				return _windows;
+			}
+		}
+		public bool NoRepeat
+		{
+			get
+			{
+				if (_disposed)
+				{
+					throw new Exception("GlobalHotkey has been disposed.");
+				}
+
+				return _noRepeat;
+			}
+		}
+		public bool Disposed
+		{
+			get
+			{
+				return _disposed;
+			}
+		}
 		#endregion
 		#region Private Variables
-		private IntPtr _windowHandle = IntPtr.Zero;
+		private HotkeyEvent _hotkeyEvent = null;
 		private Keys _key = Keys.F12;
 		private bool _control = false;
 		private bool _shift = false;
 		private bool _alt = false;
 		private bool _windows = false;
 		private bool _noRepeat = true;
-		private bool _registered = false;
 		private bool _disposed = false;
+		private WindowsMessagePump _subsystem = null;
 		#endregion
 		#region Public Constructors
-		public GlobalHotkey(Form form, Keys key)
+		public GlobalHotkey(Keys key, HotkeyEvent hotkeyEvent)
 		{
-			_windowHandle = form.Handle;
 			_key = key;
 			_control = false;
 			_shift = false;
 			_alt = false;
 			_windows = false;
 			_noRepeat = true;
-			_registered = false;
 			_disposed = false;
-		}
-		public GlobalHotkey(Form form, Keys key, HotkeyModifier modifiers)
-		{
-			_windowHandle = form.Handle;
-			_key = key;
-			_control = ((modifiers & HotkeyModifier.Control) is HotkeyModifier.Control);
-			_shift = ((modifiers & HotkeyModifier.Shift) is HotkeyModifier.Shift);
-			_alt = ((modifiers & HotkeyModifier.Alt) is HotkeyModifier.Alt);
-			_windows = ((modifiers & HotkeyModifier.Windows) is HotkeyModifier.Windows);
-			_noRepeat = ((modifiers & HotkeyModifier.NoRepeat) is HotkeyModifier.NoRepeat);
-			_registered = false;
-			_disposed = false;
-		}
-		public GlobalHotkey(Form form, Keys key, bool control, bool shift, bool alt, bool windows)
-		{
-			_windowHandle = form.Handle;
-			_key = key;
-			_control = control;
-			_shift = shift;
-			_alt = alt;
-			_windows = windows;
-			_noRepeat = true;
-			_registered = false;
-			_disposed = false;
-		}
-		public GlobalHotkey(Form form, Keys key, bool control, bool shift, bool alt, bool windows, bool repeat)
-		{
-			_windowHandle = form.Handle;
-			_key = key;
-			_control = control;
-			_shift = shift;
-			_alt = alt;
-			_windows = windows;
-			_noRepeat = repeat;
-			_registered = false;
-			_disposed = false;
-		}
-		public GlobalHotkey(IntPtr windowHandle, Keys key)
-		{
-			_windowHandle = windowHandle;
-			_key = key;
-			_control = false;
-			_shift = false;
-			_alt = false;
-			_windows = false;
-			_noRepeat = true;
-			_registered = false;
-			_disposed = false;
-		}
-		public GlobalHotkey(IntPtr windowHandle, Keys key, HotkeyModifier modifiers)
-		{
-			_windowHandle = windowHandle;
-			_key = key;
-			_control = ((modifiers & HotkeyModifier.Control) is HotkeyModifier.Control);
-			_shift = ((modifiers & HotkeyModifier.Shift) is HotkeyModifier.Shift);
-			_alt = ((modifiers & HotkeyModifier.Alt) is HotkeyModifier.Alt);
-			_windows = ((modifiers & HotkeyModifier.Windows) is HotkeyModifier.Windows);
-			_noRepeat = ((modifiers & HotkeyModifier.NoRepeat) is HotkeyModifier.NoRepeat);
-			_registered = false;
-			_disposed = false;
-		}
-		public GlobalHotkey(IntPtr windowHandle, Keys key, bool control, bool shift, bool alt, bool windows)
-		{
-			_windowHandle = windowHandle;
-			_key = key;
-			_control = control;
-			_shift = shift;
-			_alt = alt;
-			_windows = windows;
-			_noRepeat = true;
-			_registered = false;
-			_disposed = false;
-		}
-		public GlobalHotkey(IntPtr windowHandle, Keys key, bool control, bool shift, bool alt, bool windows, bool repeat)
-		{
-			_windowHandle = windowHandle;
-			_key = key;
-			_control = control;
-			_shift = shift;
-			_alt = alt;
-			_windows = windows;
-			_noRepeat = repeat;
-			_registered = false;
-			_disposed = false;
-		}
-		#endregion
-		#region Public Methods
-		public bool ProcessMessage(Message windowsMessage)
-		{
-			if (windowsMessage.Msg is 0x0312 && windowsMessage.WParam.ToInt32() == GetHashCode())
-			{
-				return true;
-			}
-			else
-			{
-				return false;
-			}
-		}
-		public void Register()
-		{
-			if (_disposed)
-			{
-				throw new Exception("GlobalHotkey has been disposed.");
-			}
+			_hotkeyEvent = hotkeyEvent;
 
-			if (_registered)
-			{
-				throw new Exception("GlobalHotKey is already registered.");
-			}
+			_subsystem = new WindowsMessagePump();
+			_subsystem.WindowsMessageHandler = MessageHandler;
 
-			uint modifiers = 0x0000;
+			uint modifiersUInt = 0x0000;
 			if (_alt)
 			{
-				modifiers = modifiers | 0x0001;
+				modifiersUInt |= 0x0001;
 			}
 			if (_control)
 			{
-				modifiers = modifiers | 0x0002;
+				modifiersUInt |= 0x0002;
 			}
 			if (_shift)
 			{
-				modifiers = modifiers | 0x0004;
+				modifiersUInt |= 0x0004;
 			}
 			if (_windows)
 			{
-				modifiers = modifiers | 0x0008;
+				modifiersUInt |= 0x0008;
 			}
 			if (!_noRepeat && false)
 			{
-				modifiers = modifiers | 0x4000;
+				modifiersUInt |= 0x4000;
 			}
 
-			if (RegisterHotKey(_windowHandle, GetHashCode(), modifiers, (uint)_key))
+			if (!RegisterHotKey(_subsystem.Handle, 0, modifiersUInt, (uint)_key))
 			{
 				throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
 			}
-
-			_registered = true;
 		}
-		public void Unregister()
+		public GlobalHotkey(Keys key, HotkeyModifier modifiers, HotkeyEvent hotkeyEvent)
 		{
-			if (_disposed)
+			_key = key;
+			_control = ((modifiers & HotkeyModifier.Control) is HotkeyModifier.Control);
+			_shift = ((modifiers & HotkeyModifier.Shift) is HotkeyModifier.Shift);
+			_alt = ((modifiers & HotkeyModifier.Alt) is HotkeyModifier.Alt);
+			_windows = ((modifiers & HotkeyModifier.Windows) is HotkeyModifier.Windows);
+			_noRepeat = ((modifiers & HotkeyModifier.NoRepeat) is HotkeyModifier.NoRepeat);
+			_disposed = false;
+			_hotkeyEvent = hotkeyEvent;
+
+			_subsystem = new WindowsMessagePump();
+			_subsystem.WindowsMessageHandler = MessageHandler;
+
+			uint modifiersUInt = 0x0000;
+			if (_alt)
 			{
-				throw new Exception("GlobalHotkey has been disposed.");
+				modifiersUInt |= 0x0001;
+			}
+			if (_control)
+			{
+				modifiersUInt |= 0x0002;
+			}
+			if (_shift)
+			{
+				modifiersUInt |= 0x0004;
+			}
+			if (_windows)
+			{
+				modifiersUInt |= 0x0008;
+			}
+			if (!_noRepeat && false)
+			{
+				modifiersUInt |= 0x4000;
 			}
 
-			if (!_registered)
+			if (!RegisterHotKey(_subsystem.Handle, 0, modifiersUInt, (uint)_key))
 			{
-				throw new Exception("GlobalHotKey is already unregistered.");
+				throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
 			}
-
-			UnregisterHotKey(_windowHandle, GetHashCode());
-
-			_registered = false;
 		}
+		public GlobalHotkey(Form form, Keys key, bool control, bool shift, bool alt, bool windows, HotkeyEvent hotkeyEvent)
+		{
+			_key = key;
+			_control = control;
+			_shift = shift;
+			_alt = alt;
+			_windows = windows;
+			_noRepeat = true;
+			_disposed = false;
+			_hotkeyEvent = hotkeyEvent;
+
+			_subsystem = new WindowsMessagePump();
+			_subsystem.WindowsMessageHandler = MessageHandler;
+
+			uint modifiersUInt = 0x0000;
+			if (_alt)
+			{
+				modifiersUInt |= 0x0001;
+			}
+			if (_control)
+			{
+				modifiersUInt |= 0x0002;
+			}
+			if (_shift)
+			{
+				modifiersUInt |= 0x0004;
+			}
+			if (_windows)
+			{
+				modifiersUInt |= 0x0008;
+			}
+			if (!_noRepeat && false)
+			{
+				modifiersUInt |= 0x4000;
+			}
+
+			if (!RegisterHotKey(_subsystem.Handle, 0, modifiersUInt, (uint)_key))
+			{
+				throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
+			}
+		}
+		public GlobalHotkey(Form form, Keys key, bool control, bool shift, bool alt, bool windows, bool repeat, HotkeyEvent hotkeyEvent)
+		{
+			_key = key;
+			_control = control;
+			_shift = shift;
+			_alt = alt;
+			_windows = windows;
+			_noRepeat = repeat;
+			_disposed = false;
+			_hotkeyEvent = hotkeyEvent;
+
+			_subsystem = new WindowsMessagePump();
+			_subsystem.WindowsMessageHandler = MessageHandler;
+
+			uint modifiersUInt = 0x0000;
+			if (_alt)
+			{
+				modifiersUInt |= 0x0001;
+			}
+			if (_control)
+			{
+				modifiersUInt |= 0x0002;
+			}
+			if (_shift)
+			{
+				modifiersUInt |= 0x0004;
+			}
+			if (_windows)
+			{
+				modifiersUInt |= 0x0008;
+			}
+			if (!_noRepeat && false)
+			{
+				modifiersUInt |= 0x4000;
+			}
+
+			if (!RegisterHotKey(_subsystem.Handle, 0, modifiersUInt, (uint)_key))
+			{
+				throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
+			}
+		}
+		#endregion
+		#region Public Methods
 		public void Dispose()
 		{
 			if (_disposed)
@@ -578,19 +734,28 @@ namespace ColorYoink
 				throw new Exception("GlobalHotkey has already been disposed.");
 			}
 
-			if (_registered)
-			{
-				Unregister();
-			}
+			UnregisterHotKey(_subsystem.Handle, 0);
+			_subsystem.Dispose();
+			_subsystem = null;
 
 			_disposed = true;
 		}
 		#endregion
 		#region Private Methods
+		private void MessageHandler(ref Message message)
+		{
+			if (message.Msg is 0x0312)
+			{
+				if (!(HotkeyEvent is null))
+				{
+					HotkeyEvent.Invoke();
+				}
+			}
+		}
 		[DllImport("user32.dll")]
-		public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+		private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 		[DllImport("user32.dll")]
-		public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+		private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 		#endregion
 	}
 }
