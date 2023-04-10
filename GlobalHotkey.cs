@@ -1,211 +1,339 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Threading;
 using System.Windows.Forms;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement;
+using System;
+using System.Threading;
 
 public delegate void HotkeyEvent();
 [Flags]
 public enum HotkeyModifier : uint
 {
-    None = 0x0000,
-    Alt = 0x0001,
-    Control = 0x0002,
-    Shift = 0x0004,
-    Windows = 0x0008,
-    NoRepeat = 0x4000,
-}
-public static class GlobalHotkey
+	None = 0x0000,
+	Alt = 0x0001,
+	Control = 0x0002,
+	Shift = 0x0004,
+	Windows = 0x0008,
+	NoRepeat = 0x4000,
+};
+public sealed class GlobalHotkey
 {
-    #region Public Static Methods
-    public static void Register(Keys key, bool control, bool shift, bool alt, bool windows, bool noRepeat, HotkeyEvent hotkeyEvent)
-    {
-        lock (lockObj)
-        {
-            uint modifiersUInt = 0x0000;
-            if (alt)
-            {
-                modifiersUInt |= 0x0001;
-            }
-            if (control)
-            {
-                modifiersUInt |= 0x0002;
-            }
-            if (shift)
-            {
-                modifiersUInt |= 0x0004;
-            }
-            if (windows)
-            {
-                modifiersUInt |= 0x0008;
-            }
-            if (!noRepeat)
-            {
-                modifiersUInt |= 0x4000;
-            }
+	#region Private Subclasses
+	private sealed class SubsystemWindow : NativeWindow
+	{
+		protected override void WndProc(ref Message message)
+		{
+			base.WndProc(ref message);
 
-            HotkeyRegistryEntry entry = new HotkeyRegistryEntry();
-            entry.key = key;
-            entry.modifiers = (HotkeyModifier)modifiersUInt;
-            entry.hotkeyEvent = hotkeyEvent;
-            entry.id = nextFreeID;
-            nextFreeID++;
+			if (message.Msg is 0x0312)
+			{
+				Keys key = (Keys)(((int)message.LParam >> 16) & 0xFFFF);
+				HotkeyModifier modifiers = (HotkeyModifier)((uint)message.LParam & 0xFFFF);
 
-            if (!RegisterHotKey(subsystem.Handle, entry.id, (uint)entry.modifiers, (uint)entry.key))
-            {
-                throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
-            }
+				lock (_lock)
+				{
+					foreach (GlobalHotkey globalHotkey in _registeredGlobalHotkeys)
+					{
+						if (globalHotkey._key == key && globalHotkey._modifiers == modifiers)
+						{
+							globalHotkey._hotkeyEvent.Invoke();
+						}
+					}
+				}
+			}
+		}
+	}
+	#endregion
+	#region Private Static Variables
+	private static object _lock = new object();
+	private static List<GlobalHotkey> _registeredGlobalHotkeys = new List<GlobalHotkey>();
 
-            hotkeyRegistry.Add(entry);
-        }
-    }
-    public static void Register(Keys key, HotkeyModifier modifiers, HotkeyEvent hotkeyEvent)
-    {
-        lock (lockObj)
-        {
-            for (int i = 0; i < hotkeyRegistry.Count; i++)
-            {
-                if (hotkeyRegistry[i].hotkeyEvent == hotkeyEvent)
-                {
-                    throw new Exception("");
-                }
-            }
+	private static object _nextAvailibleHotkeyIDLock = new object();
+	private static int _nextAvailibleHotkeyID = 0;
+	
+	private static bool _subsystemRunning = false;
+	private static SubsystemWindow _subsystemWindow = null;
+	#endregion
+	#region Private Static Methods
+	public static void StartMessagePump()
+	{
+		Thread _globalHotkeyMessagePump = new Thread(RunMessagePump);
+		_globalHotkeyMessagePump.Name = "GlobalHotkey Message Pump";
+		_globalHotkeyMessagePump.Priority = ThreadPriority.BelowNormal;
+		_globalHotkeyMessagePump.IsBackground = true;
+		_globalHotkeyMessagePump.Start();
+	}
+	public static void RunMessagePump()
+	{
+		lock (_lock)
+		{
+			_subsystemWindow = new SubsystemWindow();
+			_subsystemWindow.CreateHandle(new CreateParams());
+		}
+	}
+	public static void Help()
+	{
+		while (true)
+		{
+			Application.DoEvents();
+		}
+	}
+	[DllImport("user32.dll")]
+	private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+	[DllImport("user32.dll")]
+	private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+	#endregion
+	#region Public Variables
+	public HotkeyEvent HotkeyEvent
+	{
+		get
+		{
+			return _hotkeyEvent;
+		}
+	}
+	public Keys Key
+	{
+		get
+		{
+			return _key;
+		}
+	}
+	public HotkeyModifier Modifiers
+	{
+		get
+		{
+			return _modifiers;
+		}
+	}
+	public bool Control
+	{
+		get
+		{
+			if ((_modifiers & HotkeyModifier.Control) == HotkeyModifier.Control)
+			{
+				return true;
+			}
+			else
+			{
+				return false;
+			}
+		}
+	}
+	public bool Shift
+	{
+		get
+		{
+			if ((_modifiers & HotkeyModifier.Shift) == HotkeyModifier.Shift)
+			{
+				return true;
+			}
+			else
+			{
+				return false;
+			}
+		}
+	}
+	public bool Alt
+	{
+		get
+		{
+			if ((_modifiers & HotkeyModifier.Alt) == HotkeyModifier.Alt)
+			{
+				return true;
+			}
+			else
+			{
+				return false;
+			}
+		}
+	}
+	public bool Windows
+	{
+		get
+		{
+			if ((_modifiers & HotkeyModifier.Windows) == HotkeyModifier.Windows)
+			{
+				return true;
+			}
+			else
+			{
+				return false;
+			}
+		}
+	}
+	public bool NoRepeat
+	{
+		get
+		{
+			if ((_modifiers & HotkeyModifier.NoRepeat) == HotkeyModifier.NoRepeat)
+			{
+				return true;
+			}
+			else
+			{
+				return false;
+			}
+		}
+	}
+	public int HotkeyID
+	{
+		get
+		{
+			return _hotkeyID;
+		}
+	}
+	public bool Registered
+	{
+		get
+		{
+			return _registered;
+		}
+	}
+	#endregion
+	#region Private Variables
+	private HotkeyEvent _hotkeyEvent = null;
+	private Keys _key = Keys.None;
+	private HotkeyModifier _modifiers = HotkeyModifier.None;
+	private int _hotkeyID = 0;
+	private bool _registered = false;
+	#endregion
+	#region Public Constructors
+	public GlobalHotkey(Keys key, HotkeyEvent hotkeyEvent)
+	{
+		if (hotkeyEvent is null)
+		{
+			throw new Exception("hotkeyEvent cannot be null.");
+		}
+		_hotkeyEvent = hotkeyEvent;
+		_key = key;
+		_modifiers = HotkeyModifier.None;
 
-            HotkeyRegistryEntry entry = new HotkeyRegistryEntry();
-            entry.key = key;
-            entry.modifiers = modifiers;
-            entry.hotkeyEvent = hotkeyEvent;
-            entry.id = nextFreeID;
-            nextFreeID++;
+		lock (_nextAvailibleHotkeyIDLock)
+		{
+			_hotkeyID = _nextAvailibleHotkeyID;
+			_nextAvailibleHotkeyID++;
+		}
 
-            if (!RegisterHotKey(subsystem.Handle, entry.id, (uint)entry.modifiers, (uint)entry.key))
-            {
-                throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
-            }
+		_registered = false;
+	}
+	public GlobalHotkey(Keys key, HotkeyModifier modifiers, HotkeyEvent hotkeyEvent)
+	{
+		if (hotkeyEvent is null)
+		{
+			throw new Exception("hotkeyEvent cannot be null.");
+		}
+		_hotkeyEvent = hotkeyEvent;
+		_key = key;
+		_modifiers = modifiers;
 
-            hotkeyRegistry.Add(entry);
-        }
-    }
-    public static void Unregister(HotkeyEvent hotkeyEvent)
-    {
-        lock (lockObj)
-        {
-            
-        }
-    }
-    public static void UnregisterAll(Keys key, HotkeyModifier modifiers)
-    {
+		lock (_nextAvailibleHotkeyIDLock)
+		{
+			_hotkeyID = _nextAvailibleHotkeyID;
+			_nextAvailibleHotkeyID++;
+		}
 
-    }
-    public static void UnregisterAll()
-    {
+		_registered = false;
+	}
+	public GlobalHotkey(Keys key, bool control, bool shift, bool alt, bool windows, HotkeyEvent hotkeyEvent)
+	{
+		if (hotkeyEvent is null)
+		{
+			throw new Exception("hotkeyEvent cannot be null.");
+		}
+		_hotkeyEvent = hotkeyEvent;
+		_key = key;
 
-    }
-    #endregion
-    #region Private Static Methods
-    #endregion
-    #region Private Static Variables
-    private static List<HotkeyRegistryEntry> hotkeyRegistry = new List<HotkeyRegistryEntry>();
-    private static object lockObj = new object();
-    private static int nextFreeID = 0;
-    private static SubsystemWindow subsystem = null;
-    private static bool running = false;
-    private static bool startRequested = false;
-    private static bool stopRequested = false;
-    #endregion
-    #region Private Subclasses
-    private sealed class HotkeyRegistryEntry
-    {
-        public Keys key = Keys.None;
-        public HotkeyModifier modifiers = HotkeyModifier.None;
-        public HotkeyEvent hotkeyEvent = null;
-        public int id = 0;
-    }
-    private sealed class SubsystemWindow : NativeWindow
-    {
-        protected override void WndProc(ref Message message)
-        {
-            base.WndProc(ref message);
+		if (control)
+		{
+			_modifiers |= HotkeyModifier.Control;
+		}
+		if (shift)
+		{
+			_modifiers |= HotkeyModifier.Shift;
+		}
+		if (alt)
+		{
+			_modifiers |= HotkeyModifier.Alt;
+		}
+		if (windows)
+		{
+			_modifiers |= HotkeyModifier.Windows;
+		}
 
-            if (message.Msg is 0x0312)
-            {
-                Keys key = (Keys)(((int)message.LParam >> 16) & 0xFFFF);
-                HotkeyModifier modifier = (HotkeyModifier)((int)message.LParam & 0xFFFF);
+		lock (_nextAvailibleHotkeyIDLock)
+		{
+			_hotkeyID = _nextAvailibleHotkeyID;
+			_nextAvailibleHotkeyID++;
+		}
 
-                if (!(HotkeyEvent is null))
-                {
-                    HotkeyEvent.Invoke();
-                }
-            }
-        }
-    }
-    #endregion
-    #region Private PInvoke Bindings
-    [DllImport("user32.dll")]
-    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-    [DllImport("user32.dll")]
-    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-    #endregion
-    //Old Code
-    public sealed class HotkeyBinding
-    {
-        #region Public Methods 
-        public void Dispose()
-        {
-            if (_disposed)
-            {
-                throw new Exception("GlobalHotkey has already been disposed.");
-            }
+		_registered = false;
+	}
+	public GlobalHotkey(Keys key, bool control, bool shift, bool alt, bool windows, bool noRepeat, HotkeyEvent hotkeyEvent)
+	{
+		if (hotkeyEvent is null)
+		{
+			throw new Exception("hotkeyEvent cannot be null.");
+		}
+		_hotkeyEvent = hotkeyEvent;
+		_key = key;
 
-            UnregisterHotKey(_subsystem.Handle, GetHashCode());
-            _subsystem.Dispose();
-            _subsystem = null;
+		if (control)
+		{
+			_modifiers |= HotkeyModifier.Control;
+		}
+		if (shift)
+		{
+			_modifiers |= HotkeyModifier.Shift;
+		}
+		if (alt)
+		{
+			_modifiers |= HotkeyModifier.Alt;
+		}
+		if (windows)
+		{
+			_modifiers |= HotkeyModifier.Windows;
+		}
+		if (noRepeat)
+		{
+			_modifiers |= HotkeyModifier.NoRepeat;
+		}
 
-            _disposed = true;
-        }
-        #endregion
-        #region Private Methods
-        private void AsyncInvokeHotkeyEvent()
-        {
-            for (int i = 0; i < _hotkeyEvent.Count; i++)
-            {
-                ThreadPool.QueueUserWorkItem((object state) => { _hotkeyEvent[i].Invoke(); }, null);
-            }
-        }
-        #endregion
-    }
-    #region Public Static Variables
-    public static EventPumpState State { get; private set; } = EventPumpState.Stopped;
-    #endregion
-    private List<HotkeyBinding> _registeredHotKeys = new List<HotkeyBinding>();
-    private static Thread _pumpThread = null;
-    private static readonly object _stateLock = new object();
-    internal static void Start()
-    {
-        lock (_stateLock)
-        {
-            if (State is EventPumpState.Stopped || State is EventPumpState.Stopping)
-            {
-                State = EventPumpState.Starting;
-            }
-        }
-    }
-    internal static void Stop()
-    {
+		lock (_nextAvailibleHotkeyIDLock)
+		{
+			_hotkeyID = _nextAvailibleHotkeyID;
+			_nextAvailibleHotkeyID++;
+		}
 
-    }
-    private void LaunchPumpThread()
-    {
-        _pumpThread
+		_registered = false;
+	}
+	#endregion
+	#region Public Methods
+	public void Register()
+	{
+		lock (_lock)
+		{
+			if (_registered)
+			{
+				throw new Exception("GlobalHotkey has already been registered.");
+			}
 
-            while (true)
-        {
-            Application.DoEvents();
-        }
-    }
-    private static void RunPump()
-    {
+			_registeredGlobalHotkeys.Add(this);
+			RegisterHotKey(_subsystemWindow.Handle, _hotkeyID, (uint)_modifiers, (uint)_key);
+			_registered = true;
+		}
+	}
+	public void Unregister()
+	{
+		lock (_lock)
+		{
+			if (!_registered)
+			{
+				throw new Exception("GlobalHotkey has already been unregistered.");
+			}
 
-    }
+			_registeredGlobalHotkeys.Remove(this);
+			UnregisterHotKey(_subsystemWindow.Handle, _hotkeyID);
+			_registered = false;
+		}
+	}
+	#endregion
 }

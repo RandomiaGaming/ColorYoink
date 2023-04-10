@@ -11,8 +11,6 @@ using System.Threading;
 using System.Media;
 using System.Reflection.Emit;
 using System.IO;
-using GlobalHotkeyHelper;
-
 namespace ColorYoink
 {
 	public static class Program
@@ -20,34 +18,41 @@ namespace ColorYoink
 		[STAThread]
 		public static void Main(string[] args)
 		{
-			Thread bigboi = new Thread(() => {
-				HotkeyBinding CtrlAltC = new HotkeyBinding(Keys.C, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("hi"); });
-				HotkeyBinding CtrlAltD = new HotkeyBinding(Keys.D, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("hello"); });
+			GlobalHotkey CtrlAltC = new GlobalHotkey(Keys.C, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("hi"); });
+			GlobalHotkey CtrlAltD = new GlobalHotkey(Keys.D, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("hello"); });
 
-				NotifyIcon notifyIcon = new NotifyIcon();
-				notifyIcon.Icon = new Icon("icon.ico");
-				notifyIcon.Visible = true;
+			new Thread(() =>
+			{
+				GlobalHotkey.RunMessagePump();
 
-				ContextMenuStrip menu = new ContextMenuStrip();
 
-				ToolStripMenuItem exitMenuItem = new ToolStripMenuItem("Exit ColorYoink");
-				exitMenuItem.Click += new EventHandler((object sender, EventArgs e) =>
-				{
-					notifyIcon.Dispose();
-					CtrlAltC.Dispose();
-					CtrlAltD.Dispose();
-					Environment.Exit(0);
-				});
-				menu.Items.Add(exitMenuItem);
+				CtrlAltC.Register();
+				CtrlAltD.Register();
 
-				notifyIcon.ContextMenuStrip = menu;
+				GlobalHotkey.Help();
+			}).Start();
 
-				while (true)
-				{
-					Application.DoEvents();
-				}
+			Thread.Sleep(-1);
+
+
+
+
+			NotifyIcon notifyIcon = new NotifyIcon();
+			notifyIcon.Icon = new Icon("icon.ico");
+			notifyIcon.Visible = true;
+
+			ContextMenuStrip menu = new ContextMenuStrip();
+
+			ToolStripMenuItem exitMenuItem = new ToolStripMenuItem("Exit ColorYoink");
+			exitMenuItem.Click += new EventHandler((object sender, EventArgs e) =>
+			{
+				notifyIcon.Dispose();
+				Environment.Exit(0);
 			});
-			bigboi.Start();
+			menu.Items.Add(exitMenuItem);
+
+			notifyIcon.ContextMenuStrip = menu;
+
 		}
 		public static void YoinkColor()
 		{
