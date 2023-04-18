@@ -31,7 +31,7 @@ public sealed class GlobalHotkey
 
 				lock (_lock)
 				{
-					foreach (GlobalHotkey globalHotkey in _registeredGlobalHotkeys)
+					foreach (GlobalHotkey globalHotkey in _registery)
 					{
 						if (globalHotkey._key == key && globalHotkey._modifiers == modifiers)
 						{
@@ -45,36 +45,58 @@ public sealed class GlobalHotkey
 	#endregion
 	#region Private Static Variables
 	private static object _lock = new object();
-	private static List<GlobalHotkey> _registeredGlobalHotkeys = new List<GlobalHotkey>();
+	private static List<GlobalHotkey> _registery = new List<GlobalHotkey>();
+	private static List<GlobalHotkey> _registeryQue = new List<GlobalHotkey>();
 
-	private static object _nextAvailibleHotkeyIDLock = new object();
-	private static int _nextAvailibleHotkeyID = 0;
-	
+	private static object _nextIDLock = new object();
+	private static int _nextID = 0;
+
 	private static bool _subsystemRunning = false;
 	private static SubsystemWindow _subsystemWindow = null;
+	private static Thread _subsystemThread = null;
 	#endregion
 	#region Private Static Methods
-	public static void StartMessagePump()
+	public static void CheckPump()
 	{
-		Thread _globalHotkeyMessagePump = new Thread(RunMessagePump);
-		_globalHotkeyMessagePump.Name = "GlobalHotkey Message Pump";
-		_globalHotkeyMessagePump.Priority = ThreadPriority.BelowNormal;
-		_globalHotkeyMessagePump.IsBackground = true;
-		_globalHotkeyMessagePump.Start();
-	}
-	public static void RunMessagePump()
-	{
-		lock (_lock)
+		if (_subsystemRunning)
 		{
-			_subsystemWindow = new SubsystemWindow();
-			_subsystemWindow.CreateHandle(new CreateParams());
+			return;
 		}
-	}
-	public static void Help()
-	{
-		while (true)
+
+		_subsystemThread = new Thread(() =>
 		{
-			Application.DoEvents();
+			lock (_lock)
+			{
+				_subsystemWindow = new SubsystemWindow();
+				_subsystemWindow.CreateHandle(new CreateParams());
+			}
+
+			_subsystemRunning = true;
+
+			while (true)
+			{
+				lock (_lock)
+				{
+					while (_registeryQue.Count > 0)
+					{
+						RegisterHotKey(_subsystemWindow.Handle, _registeryQue[0]._hotkeyID, (uint)_registeryQue[0]._modifiers, (uint)_registeryQue[0]._key);
+						_registery.Add(_registeryQue[0]);
+						_registeryQue.RemoveAt(0);
+					}
+				}
+
+				Application.DoEvents();
+			}
+		});
+
+		_subsystemThread.Name = "GlobalHotkey Message Pump";
+		_subsystemThread.Priority = ThreadPriority.BelowNormal;
+		_subsystemThread.IsBackground = true;
+		_subsystemThread.Start();
+
+		while (!_subsystemRunning)
+		{
+
 		}
 	}
 	[DllImport("user32.dll")]
@@ -207,10 +229,10 @@ public sealed class GlobalHotkey
 		_key = key;
 		_modifiers = HotkeyModifier.None;
 
-		lock (_nextAvailibleHotkeyIDLock)
+		lock (_nextIDLock)
 		{
-			_hotkeyID = _nextAvailibleHotkeyID;
-			_nextAvailibleHotkeyID++;
+			_hotkeyID = _nextID;
+			_nextID++;
 		}
 
 		_registered = false;
@@ -225,10 +247,10 @@ public sealed class GlobalHotkey
 		_key = key;
 		_modifiers = modifiers;
 
-		lock (_nextAvailibleHotkeyIDLock)
+		lock (_nextIDLock)
 		{
-			_hotkeyID = _nextAvailibleHotkeyID;
-			_nextAvailibleHotkeyID++;
+			_hotkeyID = _nextID;
+			_nextID++;
 		}
 
 		_registered = false;
@@ -259,10 +281,10 @@ public sealed class GlobalHotkey
 			_modifiers |= HotkeyModifier.Windows;
 		}
 
-		lock (_nextAvailibleHotkeyIDLock)
+		lock (_nextIDLock)
 		{
-			_hotkeyID = _nextAvailibleHotkeyID;
-			_nextAvailibleHotkeyID++;
+			_hotkeyID = _nextID;
+			_nextID++;
 		}
 
 		_registered = false;
@@ -297,10 +319,10 @@ public sealed class GlobalHotkey
 			_modifiers |= HotkeyModifier.NoRepeat;
 		}
 
-		lock (_nextAvailibleHotkeyIDLock)
+		lock (_nextIDLock)
 		{
-			_hotkeyID = _nextAvailibleHotkeyID;
-			_nextAvailibleHotkeyID++;
+			_hotkeyID = _nextID;
+			_nextID++;
 		}
 
 		_registered = false;
@@ -309,6 +331,8 @@ public sealed class GlobalHotkey
 	#region Public Methods
 	public void Register()
 	{
+		CheckPump();
+
 		lock (_lock)
 		{
 			if (_registered)
@@ -316,8 +340,7 @@ public sealed class GlobalHotkey
 				throw new Exception("GlobalHotkey has already been registered.");
 			}
 
-			_registeredGlobalHotkeys.Add(this);
-			RegisterHotKey(_subsystemWindow.Handle, _hotkeyID, (uint)_modifiers, (uint)_key);
+			_registeryQue.Add(this);
 			_registered = true;
 		}
 	}
@@ -330,7 +353,7 @@ public sealed class GlobalHotkey
 				throw new Exception("GlobalHotkey has already been unregistered.");
 			}
 
-			_registeredGlobalHotkeys.Remove(this);
+			_registery.Remove(this);
 			UnregisterHotKey(_subsystemWindow.Handle, _hotkeyID);
 			_registered = false;
 		}

@@ -11,6 +11,7 @@ using System.Threading;
 using System.Media;
 using System.Reflection.Emit;
 using System.IO;
+
 namespace ColorYoink
 {
 	public static class Program
@@ -18,24 +19,8 @@ namespace ColorYoink
 		[STAThread]
 		public static void Main(string[] args)
 		{
-			GlobalHotkey CtrlAltC = new GlobalHotkey(Keys.C, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("hi"); });
-			GlobalHotkey CtrlAltD = new GlobalHotkey(Keys.D, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("hello"); });
-
-			new Thread(() =>
-			{
-				GlobalHotkey.RunMessagePump();
-
-
-				CtrlAltC.Register();
-				CtrlAltD.Register();
-
-				GlobalHotkey.Help();
-			}).Start();
-
-			Thread.Sleep(-1);
-
-
-
+			GlobalHotkey CtrlAltC = new GlobalHotkey(Keys.C, HotkeyModifier.Control | HotkeyModifier.Alt, () => { YoinkColor(); });
+			CtrlAltC.Register();
 
 			NotifyIcon notifyIcon = new NotifyIcon();
 			notifyIcon.Icon = new Icon("icon.ico");
@@ -46,6 +31,7 @@ namespace ColorYoink
 			ToolStripMenuItem exitMenuItem = new ToolStripMenuItem("Exit ColorYoink");
 			exitMenuItem.Click += new EventHandler((object sender, EventArgs e) =>
 			{
+				CtrlAltC.Unregister();
 				notifyIcon.Dispose();
 				Environment.Exit(0);
 			});
@@ -53,12 +39,17 @@ namespace ColorYoink
 
 			notifyIcon.ContextMenuStrip = menu;
 
+			while (true)
+			{
+				Application.DoEvents();
+			}
 		}
 		public static void YoinkColor()
 		{
 			try
 			{
 				ColorYoink.SetClipboardToPNG(ColorYoink.ColorToBitmap(ColorYoink.GetColorFromScreen(ColorYoink.GetCursorPosition()), 16, 16));
+				SystemSounds.Asterisk.Play();
 			}
 			catch (Exception ex)
 			{
@@ -81,7 +72,7 @@ namespace ColorYoink
 		{
 			MemoryStream bitmapDataStream = new MemoryStream();
 			source.Save(bitmapDataStream, ImageFormat.Png);
-			Clipboard.SetData("PNG", bitmapDataStream);
+			ClipboardHelper.SetClipboardStream(bitmapDataStream);
 			bitmapDataStream.Dispose();
 		}
 		public static Color GetColorFromScreen(Point point)
@@ -276,4 +267,65 @@ namespace ColorYoink
 		private static extern bool GetCursorPos(out Point lpPoint);
 		#endregion
 	}
+	public static class ClipboardHelper
+	{
+		[DllImport("user32.dll")]
+		private static extern bool OpenClipboard(IntPtr hWndNewOwner);
+		[DllImport("user32.dll")]
+		private static extern bool EmptyClipboard();
+		[DllImport("user32.dll")]
+		private static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		private static extern bool CloseClipboard();
+		[DllImport("user32.dll", SetLastError = true)]
+		private static extern uint RegisterClipboardFormat(string lpszFormat);
+
+		public static void SetClipboardStream(MemoryStream stream)
+		{
+			if (!OpenClipboard(IntPtr.Zero))
+			{
+				throw new Exception("Failed to open clipboard");
+			}
+
+			EmptyClipboard();
+
+			try
+			{
+				// Get the bitmap data from the memory stream
+				byte[] data = stream.ToArray();
+
+				// Allocate global memory to store the bitmap data
+				IntPtr hMem = Marshal.AllocHGlobal(data.Length);
+
+				if (hMem == IntPtr.Zero)
+				{
+					throw new Exception("Failed to allocate memory for clipboard");
+				}
+
+				// Copy the bitmap data to the global memory
+				Marshal.Copy(data, 0, hMem, data.Length);
+
+				// Get the format code for the specified string format
+				uint formatCode = RegisterClipboardFormat("image/png");
+
+				if (formatCode == 0)
+				{
+					throw new Exception("Failed to register clipboard format");
+				}
+
+				// Set the clipboard data
+				SetClipboardData(formatCode, hMem);
+			}
+			finally
+			{
+				// Close the clipboard
+				if (!CloseClipboard())
+				{
+					throw new Exception("Failed to close clipboard");
+				}
+			}
+		}
+	}
+
 }
