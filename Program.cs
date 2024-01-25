@@ -11,16 +11,73 @@ using System.Threading;
 using System.Media;
 using System.Reflection.Emit;
 using System.IO;
+using System.Text;
+using System.ComponentModel;
+using System.Runtime.Remoting.Contexts;
+using System.Xml.Linq;
 
 namespace ColorYoink
 {
 	public static class Program
 	{
+		public struct FormatData
+		{
+			public uint format;
+			public string name;
+			public int length;
+			public byte[] payload;
+			public string text;
+		}
 		[STAThread]
 		public static void Main(string[] args)
 		{
-			GlobalHotkey CtrlAltC = new GlobalHotkey(Keys.C, HotkeyModifier.Control | HotkeyModifier.Alt, () => { YoinkColor(); });
+			/*GlobalHotkey CtrlAltC = new GlobalHotkey(Keys.C, HotkeyModifier.Control | HotkeyModifier.Alt, () => { MessageBox.Show("Fuck you"); });
 			CtrlAltC.Register();
+			CtrlAltC.Unregister();
+			Thread.Sleep(-1);*/
+
+			List<FormatData> formats = new List<FormatData>();
+
+			PInvoke.OpenClipboard(IntPtr.Zero);
+			uint formatInt = 0;
+			while ((formatInt = PInvoke.EnumClipboardFormats(formatInt)) != 0)
+			{
+				FormatData format = new FormatData();
+				format.format = formatInt;
+				StringBuilder formatName = new StringBuilder(256);
+				PInvoke.GetClipboardFormatName(formatInt, formatName, formatName.Capacity);
+				format.name = formatName.ToString();
+				IntPtr hGlobal = PInvoke.GetClipboardData(formatInt);
+				if(hGlobal == IntPtr.Zero)
+				{
+					format.text = "";
+					format.payload = null;
+				}
+				else
+				{
+					IntPtr clipboardContentsPointer = PInvoke.GlobalLock(hGlobal);
+					if (clipboardContentsPointer == IntPtr.Zero)
+					{
+						format.text = "";
+						format.payload = null;
+					}
+					else
+					{
+						format.text = Marshal.PtrToStringAuto(clipboardContentsPointer);
+						int size = PInvoke.GlobalSize(hGlobal);
+						format.payload = new byte[size];
+						Marshal.Copy(clipboardContentsPointer, format.payload, 0, size);
+						PInvoke.GlobalUnlock(hGlobal);
+					}
+				}
+				formats.Add(format);
+			}
+
+			// Close the clipboard
+			PInvoke.CloseClipboard();
+
+			Console.ReadLine();
+			return;
 
 			NotifyIcon notifyIcon = new NotifyIcon();
 			notifyIcon.Icon = new Icon("icon.ico");
@@ -30,11 +87,11 @@ namespace ColorYoink
 
 			ToolStripMenuItem exitMenuItem = new ToolStripMenuItem("Exit ColorYoink");
 			exitMenuItem.Click += new EventHandler((object sender, EventArgs e) =>
-			{
-				CtrlAltC.Unregister();
-				notifyIcon.Dispose();
-				Environment.Exit(0);
-			});
+				{
+					//CtrlAltC.Unregister();
+					notifyIcon.Dispose();
+					Environment.Exit(0);
+				});
 			menu.Items.Add(exitMenuItem);
 
 			notifyIcon.ContextMenuStrip = menu;
@@ -68,12 +125,44 @@ namespace ColorYoink
 		{
 			Clipboard.SetImage(source);
 		}
+		public static Bitmap clipboardContents = null;
 		public static void SetClipboardToPNG(Bitmap source)
 		{
-			MemoryStream bitmapDataStream = new MemoryStream();
-			source.Save(bitmapDataStream, ImageFormat.Png);
-			ClipboardHelper.SetClipboardStream(bitmapDataStream);
-			bitmapDataStream.Dispose();
+			// Open the clipboard
+			if (!PInvoke.OpenClipboard(IntPtr.Zero))
+			{
+				throw new Exception("Failed to open clipboard.");
+			}
+
+			// Empty the clipboard
+			if (!PInvoke.EmptyClipboard())
+			{
+				PInvoke.CloseClipboard();
+				throw new Exception("Failed to empty clipboard.");
+			}
+
+			// Set the clipboard data to the bitmap
+			IntPtr hBitmap = source.GetHbitmap();
+			IntPtr result = PInvoke.SetClipboardData(2 /* CF_BITMAP */, hBitmap);
+			clipboardContents = source;
+
+			// Check if setting the clipboard data was successful
+			if (result == IntPtr.Zero)
+			{
+				PInvoke.CloseClipboard();
+				throw new Exception("Failed to set clipboard data.");
+			}
+
+			// Close the clipboard
+			if (!PInvoke.CloseClipboard())
+			{
+				throw new Exception("Failed to close clipboard.");
+			}
+
+			while (true)
+			{
+
+			}
 		}
 		public static Color GetColorFromScreen(Point point)
 		{
@@ -267,64 +356,158 @@ namespace ColorYoink
 		private static extern bool GetCursorPos(out Point lpPoint);
 		#endregion
 	}
-	public static class ClipboardHelper
+	public static class PInvoke
 	{
-		[DllImport("user32.dll")]
-		private static extern bool OpenClipboard(IntPtr hWndNewOwner);
-		[DllImport("user32.dll")]
-		private static extern bool EmptyClipboard();
-		[DllImport("user32.dll")]
-		private static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
 		[DllImport("user32.dll", SetLastError = true)]
 		[return: MarshalAs(UnmanagedType.Bool)]
-		private static extern bool CloseClipboard();
+		public static extern bool OpenClipboard(IntPtr hWndNewOwner);
+
+
 		[DllImport("user32.dll", SetLastError = true)]
-		private static extern uint RegisterClipboardFormat(string lpszFormat);
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool CloseClipboard();
 
-		public static void SetClipboardStream(MemoryStream stream)
+
+		[DllImport("user32.dll")]
+		[return: MarshalAs(UnmanagedType.SysInt)]
+		public static extern IntPtr GetOpenClipboardWindow();
+
+
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool EmptyClipboard();
+
+
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.SysInt)]
+		public static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+
+
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.U4)]
+		public static extern uint RegisterClipboardFormat(string lpszFormat);
+
+
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.I4)]
+		public static extern int GetClipboardFormatName(uint format, [MarshalAs(UnmanagedType.LPStr)] System.Text.StringBuilder lpszFormatName, int cchMaxCount);
+
+
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.SysInt)]
+		public static extern IntPtr GetClipboardData(uint uFormat);
+
+
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.U4)]
+		public static extern uint EnumClipboardFormats(uint format);
+
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.SysInt)]
+		public static extern IntPtr GlobalLock(IntPtr hMem);
+
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool GlobalUnlock(IntPtr hMem);
+
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.I4)]
+		public static extern int GlobalSize(IntPtr hMem);
+	}
+	public static class ClipboardHelper
+	{
+		private static NativeWindow _subsystemWindow = new Func<NativeWindow>(() => { NativeWindow subsystemWindow = new NativeWindow(); subsystemWindow.CreateHandle(new CreateParams()); return subsystemWindow; }).Invoke();
+
+		public static void OpenClipboard()
 		{
-			if (!OpenClipboard(IntPtr.Zero))
+			if (!PInvoke.OpenClipboard(_subsystemWindow.Handle))
 			{
-				throw new Exception("Failed to open clipboard");
+				Marshal.ThrowExceptionForHR(Marshal.GetLastWin32Error());
+			}
+		}
+		public static void CloseClipboard()
+		{
+			if (!PInvoke.CloseClipboard())
+			{
+				Marshal.ThrowExceptionForHR(Marshal.GetLastWin32Error());
+			}
+		}
+		public static bool ClipboardOpen()
+		{
+			return PInvoke.GetOpenClipboardWindow() != IntPtr.Zero;
+		}
+		public static bool ClipboardOpenByMe()
+		{
+			return PInvoke.GetOpenClipboardWindow() != _subsystemWindow.Handle;
+		}
+		public static bool ClipboardOpenByOther()
+		{
+			IntPtr owner = PInvoke.GetOpenClipboardWindow();
+			return owner != _subsystemWindow.Handle && owner != IntPtr.Zero;
+		}
+		public enum ClipboardOpenState : byte { Closed = 0, OpenByMe = 1, OpenByOther = 2 }
+		public static ClipboardOpenState GetClipboardOpenState()
+		{
+			IntPtr owner = PInvoke.GetOpenClipboardWindow();
+			if (owner == IntPtr.Zero)
+			{
+				return ClipboardOpenState.Closed;
+			}
+			else if (owner == _subsystemWindow.Handle)
+			{
+				return ClipboardOpenState.OpenByMe;
+			}
+			else
+			{
+				return ClipboardOpenState.OpenByOther;
+			}
+		}
+		public static void ClearClipboard()
+		{
+			if (!PInvoke.EmptyClipboard())
+			{
+				Marshal.ThrowExceptionForHR(Marshal.GetLastWin32Error());
+			}
+		}
+		public static void SetClipboardBitmap(Bitmap data)
+		{
+			IntPtr hBitmap = data.GetHbitmap();
+
+			PInvoke.SetClipboardData(2 /* CF_BITMAP */, hBitmap);
+		}
+		public static void SetClipboardData(byte[] data, uint format)
+		{
+			IntPtr hMem = Marshal.AllocHGlobal(data.Length);
+
+			if (hMem == IntPtr.Zero)
+			{
+				throw new Exception("Failed to allocate memory for clipboard");
 			}
 
-			EmptyClipboard();
+			// Copy the bitmap data to the global memory
+			Marshal.Copy(data, 0, hMem, data.Length);
 
-			try
+			// Set the clipboard data
+			PInvoke.SetClipboardData(format, hMem);
+		}
+		public static uint GetFormatByName(string name)
+		{
+			name = name.ToLower();
+
+			for (uint i = 0; i < 1000000; i++)
 			{
-				// Get the bitmap data from the memory stream
-				byte[] data = stream.ToArray();
-
-				// Allocate global memory to store the bitmap data
-				IntPtr hMem = Marshal.AllocHGlobal(data.Length);
-
-				if (hMem == IntPtr.Zero)
+				StringBuilder formatName = new StringBuilder(255);
+				int result = PInvoke.GetClipboardFormatName(i, formatName, formatName.Capacity);
+				if (!(result is 0) && formatName.ToString().ToLower() == name)
 				{
-					throw new Exception("Failed to allocate memory for clipboard");
-				}
-
-				// Copy the bitmap data to the global memory
-				Marshal.Copy(data, 0, hMem, data.Length);
-
-				// Get the format code for the specified string format
-				uint formatCode = RegisterClipboardFormat("image/png");
-
-				if (formatCode == 0)
-				{
-					throw new Exception("Failed to register clipboard format");
-				}
-
-				// Set the clipboard data
-				SetClipboardData(formatCode, hMem);
-			}
-			finally
-			{
-				// Close the clipboard
-				if (!CloseClipboard())
-				{
-					throw new Exception("Failed to close clipboard");
+					return i;
 				}
 			}
+
+			throw new Exception("Unnable to locate clipboard format with the specified name.");
 		}
 	}
 

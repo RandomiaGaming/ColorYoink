@@ -5,7 +5,7 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{D1D22977-AA23-4B19-9D19-B454AFA91699}</ProjectGuid>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Exe</OutputType>
     <RootNamespace>ColorYoink</RootNamespace>
     <AssemblyName>ColorYoink</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
