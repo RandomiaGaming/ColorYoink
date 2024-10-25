@@ -33,7 +33,7 @@ public sealed class GlobalHotkey
 				{
 					foreach (GlobalHotkey globalHotkey in _registery)
 					{
-						if (globalHotkey._key == key && globalHotkey._modifiers == modifiers)
+						if (globalHotkey._key == key && globalHotkey._modifiers == modifiers && !(globalHotkey._hotkeyEvent is null))
 						{
 							globalHotkey._hotkeyEvent.Invoke();
 						}
@@ -46,8 +46,8 @@ public sealed class GlobalHotkey
 	#region Private Static Variables
 	private static object _registryLock = new object();
 	private static List<GlobalHotkey> _registery = new List<GlobalHotkey>();
-	private static List<GlobalHotkey> _registerQue = new List<GlobalHotkey>();
-	private static List<GlobalHotkey> _unregisterQue = new List<GlobalHotkey>();
+	private static List<GlobalHotkey> _registerQueue = new List<GlobalHotkey>();
+	private static List<GlobalHotkey> _unregisterQueue = new List<GlobalHotkey>();
 
 	private static object _nextIDLock = new object();
 	private static int _nextID = 0;
@@ -77,11 +77,11 @@ public sealed class GlobalHotkey
 					{
 						lock (_registryLock)
 						{
-							while (_registerQue.Count > 0)
+							while (_registerQueue.Count > 0)
 							{
-								RegisterHotKey(_subsystemWindow.Handle, _registerQue[0]._hotkeyID, (uint)_registerQue[0]._modifiers, (uint)_registerQue[0]._key);
-								_registery.Add(_registerQue[0]);
-								_registerQue.RemoveAt(0);
+								RegisterHotKey(_subsystemWindow.Handle, _registerQueue[0]._hotkeyID, (uint)_registerQueue[0]._modifiers, (uint)_registerQueue[0]._key);
+								_registery.Add(_registerQueue[0]);
+								_registerQueue.RemoveAt(0);
 							}
 						}
 
@@ -348,7 +348,7 @@ public sealed class GlobalHotkey
 
 			lock (_registryLock)
 			{
-				_registerQue.Add(this);
+				_registerQueue.Add(this);
 				_registered = true;
 			}
 		}
